@@ -39,6 +39,7 @@ type TorrentInfo struct {
 	PieceLayers map[string]string      `bencode:"piece layers"`
 	PiecesRoot  string                 `bencode:"pieces root"`
 	Custom      map[string]interface{} `bencode:"-"`
+	InfoHash    [20]byte               `bencode:"-"`
 }
 
 type TorrentFileEntry struct {

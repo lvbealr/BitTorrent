@@ -1,14 +1,10 @@
 package torrent
 
 import (
-	"bytes"
 	crand "crypto/rand"
-	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
 	"strings"
-
-	"github.com/jackpal/bencode-go"
 )
 
 // --------------------------------------------------------------------------------------------- //
@@ -32,15 +28,8 @@ func (Torrent *TorrentFile) ParsePeers(peers string) ([]Peer, error) {
 
 // --------------------------------------------------------------------------------------------- //
 
-func (Torrent *TorrentFile) GetInfoHash() ([]byte, error) {
-	var infoBytes bytes.Buffer
-	err := bencode.Marshal(&infoBytes, Torrent.Info)
-	if err != nil {
-		return nil, fmt.Errorf("Marshaling error: %v\n", err)
-	}
-
-	hash := sha1.Sum(infoBytes.Bytes())
-	return hash[:], nil
+func (Torrent *TorrentFile) GetInfoHash() ([20]byte, error) {
+	return Torrent.Info.InfoHash, nil
 }
 
 func (Torrent *TorrentFile) GeneratePeerID() (string, error) {

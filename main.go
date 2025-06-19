@@ -21,6 +21,14 @@ func main() {
 		log.Fatalf("%v\n", err)
 	}
 
-	fmt.Printf("Tracker response - Peers: %q\n", response.Peers)
+	peers, err := torrent.ParsePeers(response.Peers)
+	if err != nil {
+		log.Fatalf("%v\n", err)
+	}
+
+	for i := 0; i < len(peers); i++ {
+		fmt.Println(peers[i].IP, peers[i].Port)
+	}
+
 	fmt.Printf("Interval: %d seconds\n", response.Interval)
 }

@@ -8,43 +8,27 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: ./BitTorrent <path-to-torrent-file>\n")
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: ./BitTorrent <path-to-torrent-file> <output-path>\n")
 		os.Exit(1)
 	}
 
-	path := os.Args[1]
-
-	var Torrent torrent.TorrentFile
-	err := torrent.Parse(&Torrent, path)
+	Torrent, err := torrent.SetTorrentFile(os.Args[1])
 	if err != nil {
 		log.Fatalf("%v\n", err)
 	}
 
-	response, err := Torrent.SendTrackerResponse()
+	peers, err := torrent.FindConnections(Torrent)
 	if err != nil {
 		log.Fatalf("%v\n", err)
 	}
 
-	peers, err := Torrent.ParsePeers(response.Peers)
+	Torrent.ConnectToPeers(peers)
+
+	err = Torrent.StartDownload(os.Args[2])
 	if err != nil {
 		log.Fatalf("%v\n", err)
 	}
 
-	for i := 0; i < len(peers); i++ {
-		fmt.Println(peers[i].IP, peers[i].Port)
-	}
-
-	fmt.Printf("Interval: %d seconds\n", response.Interval)
-
-	for i, peer := range peers {
-		fmt.Printf("[%d]	%s:%d\n", i+1, peer.IP, peer.Port)
-		remotePeerID, err := Torrent.PerformHandshake(peer)
-		if err != nil {
-			fmt.Printf("Handshake failed: %v\n", err)
-			continue
-		}
-
-		fmt.Printf("Handshake successful, remotePeerID: %s\n", remotePeerID)
-	}
+	fmt.Println("Download completed")
 }

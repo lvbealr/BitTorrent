@@ -1,16 +1,16 @@
 package torrent
 
 import (
-	"log"
+	"fmt"
 	"os"
 
 	"github.com/jackpal/bencode-go"
 )
 
-func Parse(file string) *TorrentFile {
+func Parse(file string) (*TorrentFile, error) {
 	src, err := os.Open(file)
 	if err != nil {
-		log.Fatalf("Opening file error: %v\n", err)
+		return nil, fmt.Errorf("Opening file error: %v\n", err)
 	}
 	defer src.Close()
 
@@ -18,8 +18,8 @@ func Parse(file string) *TorrentFile {
 
 	err = bencode.Unmarshal(src, &torrent)
 	if err != nil {
-		log.Fatalf("Decoding error: %v\n", err)
+		return nil, fmt.Errorf("Decoding error: %v\n", err)
 	}
 
-	return &torrent
+	return &torrent, nil
 }

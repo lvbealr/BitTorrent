@@ -3,6 +3,7 @@ package main
 import (
 	"BitTorrent/torrent"
 	"fmt"
+	"log"
 	"os"
 )
 
@@ -13,5 +14,13 @@ func main() {
 	}
 
 	path := os.Args[1]
-	torrent := torrent.Parse(path)
+	torrent, err := torrent.Parse(path)
+
+	response, err := torrent.SendTrackerResponse()
+	if err != nil {
+		log.Fatalf("%v\n", err)
+	}
+
+	fmt.Printf("Tracker response - Peers: %q\n", response.Peers)
+	fmt.Printf("Interval: %d seconds\n", response.Interval)
 }

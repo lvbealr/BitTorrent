@@ -2,27 +2,36 @@ package torrent
 
 import (
 	mrand "math/rand"
+	"net"
+	"sync"
 	"time"
 )
 
 // --------------------------------------------------------------------------------------------- //
 
 type TorrentFile struct {
-	Announce     string                 `bencode:"announce"`
-	AnnounceList [][]string             `bencode:"announce-list"`
-	Comment      string                 `bencode:"comment"`
-	CreatedBy    string                 `bencode:"created by"`
-	CreationDate int64                  `bencode:"creation date"`
-	Encoding     string                 `bencode:"encoding"`
-	Info         TorrentInfo            `bencode:"info"`
-	Nodes        [][]interface{}        `bencode:"nodes"`
-	URLList      []string               `bencode:"url-list"`
-	HTTPSeeds    []string               `bencode:"httpseeds"`
-	Publisher    string                 `bencode:"publisher"`
-	PublisherURL string                 `bencode:"publisher-url"`
-	Source       string                 `bencode:"source"`
-	Signature    string                 `bencode:"signature"`
-	Custom       map[string]interface{} `bencode:"-"`
+	Announce      string                 `bencode:"announce"`
+	AnnounceList  [][]string             `bencode:"announce-list"`
+	Comment       string                 `bencode:"comment"`
+	CreatedBy     string                 `bencode:"created by"`
+	CreationDate  int64                  `bencode:"creation date"`
+	Encoding      string                 `bencode:"encoding"`
+	Info          TorrentInfo            `bencode:"info"`
+	Nodes         [][]interface{}        `bencode:"nodes"`
+	URLList       []string               `bencode:"url-list"`
+	HTTPSeeds     []string               `bencode:"httpseeds"`
+	Publisher     string                 `bencode:"publisher"`
+	PublisherURL  string                 `bencode:"publisher-url"`
+	Source        string                 `bencode:"source"`
+	Signature     string                 `bencode:"signature"`
+	Custom        map[string]interface{} `bencode:"-"`
+	Peers         []Peer                 `bencode:"-"`
+	PeersMutex    sync.Mutex             `bencode:"-"`
+	PieceLength   int64                  `bencode:"-"`
+	NumPieces     int                    `bencode:"-"`
+	PieceHashes   [][20]byte             `bencode:"-"`
+	Downloaded    []bool                 `bencode:"-"`
+	DownloadMutex sync.Mutex             `bencode:"-"`
 }
 
 type TorrentInfo struct {
@@ -57,8 +66,12 @@ type TrackerResponse struct {
 }
 
 type Peer struct {
-	IP   string
-	Port uint16
+	IP         string
+	Port       uint16
+	PeerID     string
+	Connection net.Conn
+	Choked     bool
+	Bitfield   []byte
 }
 
 // --------------------------------------------------------------------------------------------- //

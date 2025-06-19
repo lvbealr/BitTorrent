@@ -80,6 +80,8 @@ func computeInfoHash(path string) ([20]byte, error) {
 	return sha1.Sum(infoBytes), nil
 }
 
+// --------------------------------------------------------------------------------------------- //
+
 func Parse(Torrent *TorrentFile, file string) error {
 	src, err := os.Open(file)
 	if err != nil {
@@ -101,3 +103,5 @@ func Parse(Torrent *TorrentFile, file string) error {
 
 	return nil
 }
+
+// --------------------------------------------------------------------------------------------- //

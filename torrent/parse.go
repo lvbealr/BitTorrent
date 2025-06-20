@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 
@@ -95,10 +96,10 @@ func Parse(Torrent *TorrentFile, file string) error {
 	}
 
 	hash, err := computeInfoHash(file)
-	fmt.Printf("Info hash: %x\n", hash)
+	log.Printf("[INFO]\tInfo hash: %x\n", hash)
 	Torrent.Info.InfoHash = hash
 
-	fmt.Printf("Parsed torrent: %s, InfoHash: %x, Computed Hash: %x\n",
+	log.Printf("[INFO]\tParsed torrent: %s, InfoHash: %x, Computed Hash: %x\n",
 		Torrent.Info.Name, Torrent.Info.InfoHash, hash)
 
 	return nil

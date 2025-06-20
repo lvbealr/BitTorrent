@@ -6,8 +6,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -51,7 +53,7 @@ func (Torrent *TorrentFile) PerformHandshake(peer Peer) (string, error) {
 
 	copy(hs.PeerID[:], peerID)
 
-	fmt.Printf("Sending handshake to %s: ProtocolNameLength=%d, InfoHash=%x, PeerID=%s\n",
+	log.Printf("[INFO]\tSending handshake to %s: ProtocolNameLength=%d, InfoHash=%x, PeerID=%s\n",
 		addr, hs.ProtocolNameLength, hs.InfoHash, peerID)
 	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 
@@ -70,7 +72,7 @@ func (Torrent *TorrentFile) PerformHandshake(peer Peer) (string, error) {
 		return "", fmt.Errorf("Reading handshake error: %v\n", err)
 	}
 
-	fmt.Printf("Received handshake from %s: ProtocolNameLength=%d, Protocol=%s, InfoHash=%x, PeerID=%s\n",
+	log.Printf("[INFO]\tReceived handshake from %s: ProtocolNameLength=%d, Protocol=%s, InfoHash=%x, PeerID=%s\n",
 		addr, response.ProtocolNameLength, string(response.Protocol[:]), response.InfoHash, string(response.PeerID[:]))
 	if response.ProtocolNameLength != 19 || string(response.Protocol[:]) != protocol {
 		conn.Close()
@@ -110,7 +112,7 @@ func (Torrent *TorrentFile) ConnectToPeers(peers []Peer) {
 			defer func() {
 				<-sem
 				wg.Done()
-				fmt.Printf("Peer %s:%d: CTP goroutine completed\n", peer.IP, peer.Port)
+				log.Printf("[INFO]\tPeer %s:%d: CTP goroutine completed\n", peer.IP, peer.Port)
 			}()
 
 			remotePeerID, err := Torrent.PerformHandshake(p)
@@ -118,13 +120,13 @@ func (Torrent *TorrentFile) ConnectToPeers(peers []Peer) {
 				return
 			}
 
-			fmt.Printf("Peer %s:%d handshake successful, remotePeerID: %s\n",
+			log.Printf("[INFO]\tPeer %s:%d handshake successful, remotePeerID: %s\n",
 				p.IP, p.Port, remotePeerID)
 		}(peer)
 	}
 
 	wg.Wait()
-	fmt.Printf("Connected to %d peers\n", len(Torrent.Peers))
+	log.Printf("[INFO]\tConnected to %d peers\n", len(Torrent.Peers))
 }
 
 func (Torrent *TorrentFile) InitializePieces() error {
@@ -187,11 +189,11 @@ func (Torrent *TorrentFile) SendMessage(peer *Peer, msg Message) error {
 		peer.Connection.SetWriteDeadline(time.Now().Add(60 * time.Second))
 		_, err := peer.Connection.Write(buf.Bytes())
 		if err == nil {
-			fmt.Printf("Peer %s:%d: sent message ID=%d, payload length=%d\n", peer.IP, peer.Port, msg.ID, len(msg.Payload))
+			log.Printf("[INFO]\tPeer %s:%d: sent message ID=%d, payload length=%d\n", peer.IP, peer.Port, msg.ID, len(msg.Payload))
 			return nil
 		}
 
-		fmt.Printf("Peer %s:%d: attempt %d failed to send message ID = %d: %v\n", peer.IP, peer.Port, attempt, msg.ID, err)
+		log.Printf("[FAIL]\tPeer %s:%d: attempt %d failed to send message ID = %d: %v\n", peer.IP, peer.Port, attempt, msg.ID, err)
 		time.Sleep(2 * time.Second)
 	}
 
@@ -211,7 +213,7 @@ func (Torrent *TorrentFile) ReceiveMessage(peer *Peer) (*Message, error) {
 	}
 
 	if length == 0 {
-		fmt.Printf("Peer %s:%d: received keep-alive\n", peer.IP, peer.Port)
+		log.Printf("[INFO]\tPeer %s:%d: received keep-alive\n", peer.IP, peer.Port)
 		return &Message{}, nil
 	}
 
@@ -230,7 +232,7 @@ func (Torrent *TorrentFile) ReceiveMessage(peer *Peer) (*Message, error) {
 		Payload: buf[1:],
 	}
 
-	fmt.Printf("Peer %s:%d: received message ID=%d, payload length=%d\n", peer.IP, peer.Port, msg.ID, len(msg.Payload))
+	log.Printf("[INFO]\tPeer %s:%d: received message ID=%d, payload length=%d\n", peer.IP, peer.Port, msg.ID, len(msg.Payload))
 
 	return msg, nil
 }
@@ -251,10 +253,10 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 		}
 
 		wg.Done()
-		fmt.Printf("Peer %s:%d: DownloadFromPeer completed\n", peer.IP, peer.Port)
+		log.Printf("[INFO]\tPeer %s:%d: DownloadFromPeer completed\n", peer.IP, peer.Port)
 	}()
 
-	fmt.Printf("Peer %s:%d: Starting download\n", peer.IP, peer.Port)
+	log.Printf("[INFO]\tPeer %s:%d: Starting download\n", peer.IP, peer.Port)
 
 	for attempt := 1; attempt <= 3; attempt++ {
 		err := Torrent.SendMessage(peer, Message{ID: Interested})
@@ -262,7 +264,7 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 			break
 		}
 
-		fmt.Printf("Peer %s:%d: attempt %d failed to send Interested: %v\n", peer.IP, peer.Port, attempt, err)
+		log.Printf("[FAIL]\tPeer %s:%d: attempt %d failed to send Interested: %v\n", peer.IP, peer.Port, attempt, err)
 
 		if attempt == 3 {
 			return
@@ -274,31 +276,31 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 	for {
 		msg, err := Torrent.ReceiveMessage(peer)
 		if err != nil {
-			fmt.Printf("Peer %s:%d: failed to receive message: %v\n", peer.IP, peer.Port, err)
+			log.Printf("[FAIL]\tPeer %s:%d: failed to receive message: %v\n", peer.IP, peer.Port, err)
 			return
 		}
 
 		if msg == nil {
-			fmt.Printf("Peer %s:%d: received keep-alive\n", peer.IP, peer.Port)
+			log.Printf("[INFO]\tPeer %s:%d: received keep-alive\n", peer.IP, peer.Port)
 			continue
 		}
 
 		switch msg.ID {
 		case Bitfield:
 			peer.Bitfield = msg.Payload
-			fmt.Printf("Peer %s:%d: received Bitfield (length=%d)\n", peer.IP, peer.Port, len(peer.Bitfield))
+			log.Printf("[INFO]\tPeer %s:%d: received Bitfield (length=%d)\n", peer.IP, peer.Port, len(peer.Bitfield))
 
 		case Unchoke:
 			peer.Choked = false
-			fmt.Printf("Peer %s:%d: unchoked\n", peer.IP, peer.Port)
+			log.Printf("[INFO]\tPeer %s:%d: unchoked\n", peer.IP, peer.Port)
 
 		case Choke:
 			peer.Choked = true
-			fmt.Printf("Peer %s:%d: choked\n", peer.IP, peer.Port)
+			log.Printf("[INFO]\tPeer %s:%d: choked\n", peer.IP, peer.Port)
 		}
 
 		if !peer.Choked && peer.Bitfield != nil {
-			fmt.Printf("Peer %s:%d: ready to download pieces\n", peer.IP, peer.Port)
+			log.Printf("[INFO]\tPeer %s:%d: ready to download pieces\n", peer.IP, peer.Port)
 			break
 		}
 	}
@@ -307,12 +309,12 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 
 	for {
 		if peer.Choked {
-			fmt.Printf("Peer %s:%d: choked, waiting for Unchoke\n", peer.IP, peer.Port)
+			log.Printf("[INFO]\tPeer %s:%d: choked, waiting for Unchoke\n", peer.IP, peer.Port)
 
 			for {
 				msg, err := Torrent.ReceiveMessage(peer)
 				if err != nil {
-					fmt.Printf("Peer %s:%d: failed to receive message while choked: %v\n", peer.IP, peer.Port, err)
+					log.Printf("[FAIL]\tPeer %s:%d: failed to receive message while choked: %v\n", peer.IP, peer.Port, err)
 					return
 				}
 
@@ -323,11 +325,11 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 				switch msg.ID {
 				case Unchoke:
 					peer.Choked = false
-					fmt.Printf("Peer %s:%d: unchoked\n", peer.IP, peer.Port)
+					log.Printf("[INFO]\tPeer %s:%d: unchoked\n", peer.IP, peer.Port)
 
 				case Choke:
 					peer.Choked = true
-					fmt.Printf("Peer %s:%d: choked\n", peer.IP, peer.Port)
+					log.Printf("[INFO]\tPeer %s:%d: choked\n", peer.IP, peer.Port)
 				}
 
 				if !peer.Choked {
@@ -351,7 +353,7 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 		Torrent.DownloadMutex.Unlock()
 
 		if pieceIndex == -1 {
-			fmt.Printf("Peer %s:%d: no more pieces to download\n", peer.IP, peer.Port)
+			log.Printf("[INFO]\tPeer %s:%d: no more pieces to download\n", peer.IP, peer.Port)
 			return
 		}
 
@@ -381,7 +383,7 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 
 			err := Torrent.SendMessage(peer, Message{ID: Request, Payload: payload.Bytes()})
 			if err != nil {
-				fmt.Printf("Peer %s:%d: failed to send Request for piece %d, offset %d: %v\n",
+				log.Printf("[FAIL]\tPeer %s:%d: failed to send Request for piece %d, offset %d: %v\n",
 					peer.IP, peer.Port, pieceIndex, offset, err)
 				Torrent.DownloadMutex.Lock()
 				Torrent.Downloaded[pieceIndex] = false
@@ -393,7 +395,7 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 			for {
 				msg, err := Torrent.ReceiveMessage(peer)
 				if err != nil {
-					fmt.Printf("Peer %s:%d: failed to receive Piece for piece %d, offset %d: %v\n",
+					log.Printf("[FAIL]\tPeer %s:%d: failed to receive Piece for piece %d, offset %d: %v\n",
 						peer.IP, peer.Port, pieceIndex, offset, err)
 					Torrent.DownloadMutex.Lock()
 					Torrent.Downloaded[pieceIndex] = false
@@ -409,7 +411,7 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 				switch msg.ID {
 				case Piece:
 					if len(msg.Payload) < 8 {
-						fmt.Printf("Peer %s:%d: invalid Piece payload length %d for piece %d, offset %d\n",
+						log.Printf("[ERROR]\tPeer %s:%d: invalid Piece payload length %d for piece %d, offset %d\n",
 							peer.IP, peer.Port, len(msg.Payload), pieceIndex, offset)
 						Torrent.DownloadMutex.Lock()
 						Torrent.Downloaded[pieceIndex] = false
@@ -423,7 +425,7 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 
 				case Choke:
 					peer.Choked = true
-					fmt.Printf("Peer %s:%d: choked during piece %d, offset %d\n",
+					log.Printf("[ERROR]\tPeer %s:%d: choked during piece %d, offset %d\n",
 						peer.IP, peer.Port, pieceIndex, offset)
 
 					Torrent.DownloadMutex.Lock()
@@ -433,7 +435,7 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 					continue
 
 				default:
-					fmt.Printf("Peer %s:%d: unexpected message ID %d for piece %d, offset %d\n",
+					log.Printf("[ERROR]\tPeer %s:%d: unexpected message ID %d for piece %d, offset %d\n",
 						peer.IP, peer.Port, msg.ID, pieceIndex, offset)
 					continue
 				}
@@ -445,7 +447,7 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 		hash := sha1.Sum(data)
 
 		if !bytes.Equal(hash[:], Torrent.PieceHashes[pieceIndex][:]) {
-			fmt.Printf("Peer %s:%d: piece %d hash mismatch\n", peer.IP, peer.Port, pieceIndex)
+			log.Printf("[ERROR]\tPeer %s:%d: piece %d hash mismatch\n", peer.IP, peer.Port, pieceIndex)
 
 			Torrent.DownloadMutex.Lock()
 			Torrent.Downloaded[pieceIndex] = false
@@ -454,7 +456,7 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 			continue
 		}
 
-		fmt.Printf("Peer %s:%d: downloaded piece %d (length=%d)\n",
+		log.Printf("[INFO]\tPeer %s:%d: downloaded piece %d (length=%d)\n",
 			peer.IP, peer.Port, pieceIndex, len(data))
 
 		pieceChan <- PieceResult{
@@ -482,7 +484,7 @@ func (Torrent *TorrentFile) HasPiece(bitfield []byte, index int) bool {
 func (Torrent *TorrentFile) StartDownload(outputPath string) error {
 	err := Torrent.InitializePieces()
 	if err != nil {
-		return fmt.Errorf("failed to initialize pieces: %v", err)
+		return fmt.Errorf("Failed to initialize pieces: %v", err)
 	}
 
 	pieceChan := make(chan PieceResult, Torrent.NumPieces)
@@ -496,8 +498,9 @@ func (Torrent *TorrentFile) StartDownload(outputPath string) error {
 
 	for i := range peers {
 		peer := &peers[i]
+
 		if peer.Connection == nil {
-			fmt.Printf("Peer %s:%d: invalid connection, skipping\n", peer.IP, peer.Port)
+			log.Printf("[FAIL]\tPeer %s:%d: invalid connection, skipping\n", peer.IP, peer.Port)
 			continue
 		}
 
@@ -506,7 +509,7 @@ func (Torrent *TorrentFile) StartDownload(outputPath string) error {
 		go func(pp *Peer) {
 			defer func() {
 				<-sem
-				fmt.Printf("Peer %s:%d: StartDownload goroutine completed\n", pp.IP, pp.Port)
+				log.Printf("[INFO]\tPeer %s:%d: StartDownload goroutine completed\n", pp.IP, pp.Port)
 			}()
 
 			Torrent.DownloadFromPeer(pp, pieceChan, &wg)
@@ -516,21 +519,33 @@ func (Torrent *TorrentFile) StartDownload(outputPath string) error {
 	go func() {
 		wg.Wait()
 		close(pieceChan)
-		fmt.Println("All download goroutines completed, pieceChan closed")
+		log.Printf("[INFO]\tAll download goroutines completed, pieceChan closed")
 	}()
 
 	file, err := os.Create(outputPath)
 	if err != nil {
-		return fmt.Errorf("failed to create output file: %v", err)
+		return fmt.Errorf("Failed to create output file: %v", err)
 	}
 	defer file.Close()
 
 	completed := make(map[int]bool)
+	barWidth := 50
+	completedCount := 0
+
+	var totalBytesLoaded int64
+	type speedSample struct {
+		bytes int64
+		time  time.Time
+	}
+
+	speedSamples := make([]speedSample, 0)
+	windowDuration := 5 * time.Second
 
 	for piece := range pieceChan {
 		Torrent.DownloadMutex.Lock()
+
 		if completed[piece.Index] {
-			fmt.Printf("Piece %d already written, skipping\n", piece.Index)
+			log.Printf("[INFO]\tPiece %d already written, skipping\n", piece.Index)
 			Torrent.DownloadMutex.Unlock()
 
 			continue
@@ -555,11 +570,41 @@ func (Torrent *TorrentFile) StartDownload(outputPath string) error {
 		}
 
 		completed[piece.Index] = true
+		completedCount++
+		totalBytesLoaded += int64(len(piece.Data))
 		Torrent.DownloadMutex.Unlock()
 
-		fmt.Printf("Wrote piece %d to %s, Progress: %.2f%% (%d/%d pieces)\n",
-			piece.Index, outputPath, float64(len(completed))/float64(Torrent.NumPieces)*100, len(completed), Torrent.NumPieces)
+		now := time.Now()
+		speedSamples = append(speedSamples, speedSample{bytes: int64(len(piece.Data)), time: now})
+
+		cutoff := now.Add(-windowDuration)
+		for len(speedSamples) > 0 && speedSamples[0].time.Before(cutoff) {
+			speedSamples = speedSamples[1:]
+		}
+
+		var bytesInWindow int64
+		for _, sample := range speedSamples {
+			bytesInWindow += sample.bytes
+		}
+
+		windowSeconds := windowDuration.Seconds()
+		if len(speedSamples) > 1 {
+			windowSeconds = speedSamples[len(speedSamples)-1].time.Sub(speedSamples[0].time).Seconds()
+		}
+
+		speedMBps := 0.0
+		if windowSeconds > 0 {
+			speedMBps = float64(bytesInWindow) / windowSeconds / (1024 * 1024)
+		}
+
+		progress := float64(completedCount) / float64(Torrent.NumPieces)
+		filled := int(progress * float64(barWidth))
+		bar := strings.Repeat("»", filled) + strings.Repeat("-", barWidth-filled)
+		percentage := progress * 100.0
+		fmt.Printf("\r[%s]\t[%s] (%.2f/100%%) [%.2f MB/s]", Torrent.Info.Name, bar, percentage, speedMBps)
 	}
+
+	fmt.Println("\nDownload completed!")
 
 	if len(completed) != Torrent.NumPieces {
 		return fmt.Errorf("Download incomplete: %d/%d pieces written", len(completed), Torrent.NumPieces)
@@ -573,7 +618,7 @@ func (Torrent *TorrentFile) RefreshPeer() {
 		for {
 			resp, err := Torrent.SendTrackerResponse()
 			if err != nil {
-				fmt.Printf("Failed to refresh peers: %v\n", err)
+				log.Printf("[FAIL]\tFailed to refresh peers: %v\n", err)
 				time.Sleep(60 * time.Second)
 
 				continue
@@ -581,7 +626,7 @@ func (Torrent *TorrentFile) RefreshPeer() {
 
 			newPeers, err := Torrent.ParsePeers(resp.Peers)
 			if err != nil {
-				fmt.Printf("Failed to parse new peers: %v\n", err)
+				log.Printf("[FAIL]\tFailed to parse new peers: %v\n", err)
 				time.Sleep(60 * time.Second)
 
 				continue

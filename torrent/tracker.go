@@ -3,6 +3,7 @@ package torrent
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	mrand "math/rand"
 	"net"
 	"net/http"
@@ -60,7 +61,7 @@ func (Torrent *TorrentFile) SendHTTPTrackerRequest(announceURL string) (*Tracker
 
 	req.Header.Set("User-Agent", "BitTorrent/1.0")
 
-	fmt.Printf("Sending HTTP request to %s\n", u.String())
+	log.Printf("[INFO]\tSending HTTP request to %s\n", u.String())
 
 	response, err := client.Do(req)
 	if err != nil {
@@ -150,14 +151,14 @@ func (Torrent *TorrentFile) SendUDPTrackerRequest(announceURL string) (*TrackerR
 	binary.BigEndian.PutUint32(connectReq[8:12], 0)            // TODO: to constant
 	binary.BigEndian.PutUint32(connectReq[12:16], transactionID)
 
-	fmt.Printf("Sending Connect to %s, transaction_id: %d\n", addr, transactionID)
+	log.Printf("[INFO]\tSending Connect to %s, transaction_id: %d\n", addr, transactionID)
 
 	for attempt := 0; attempt < 3; attempt++ {
 		conn.SetDeadline(time.Now().Add(time.Duration(5+attempt*2) * time.Second))
 		_, err = conn.Write(connectReq)
 
 		if err != nil {
-			fmt.Printf("Attempt %d failed to send connect: %v\n", attempt+1, err)
+			log.Printf("[FAIL]\tAttempt %d failed to send connect: %v\n", attempt+1, err)
 			continue
 		}
 
@@ -165,19 +166,19 @@ func (Torrent *TorrentFile) SendUDPTrackerRequest(announceURL string) (*TrackerR
 
 		n, err := conn.Read(resp)
 		if err != nil {
-			fmt.Printf("Attempt %d failed to read connect response: %v\n", attempt+1, err)
+			log.Printf("[FAIL]\tAttempt %d failed to read connect response: %v\n", attempt+1, err)
 			continue
 		}
 
 		if n < 16 {
-			fmt.Printf("Attempt %d invalid connect response length: %d\n", attempt+1, n)
+			log.Printf("[ERROR]\tAttempt %d invalid connect response length: %d\n", attempt+1, n)
 			continue
 		}
 
 		action := binary.BigEndian.Uint32(resp[0:4])
 
 		if action != 0 {
-			return nil, fmt.Errorf("invalid connect action: %d\n", action)
+			return nil, fmt.Errorf("Invalid connect action: %d\n", action)
 		}
 
 		if binary.BigEndian.Uint32(resp[4:8]) != transactionID {
@@ -191,7 +192,7 @@ func (Torrent *TorrentFile) SendUDPTrackerRequest(announceURL string) (*TrackerR
 			return nil, err
 		}
 
-		fmt.Printf("UDP InfoHash: %x\n", infoHash)
+		log.Printf("[INFO]\tUDP InfoHash: %x\n", infoHash)
 
 		peerID, err := Torrent.GeneratePeerID()
 		if err != nil {
@@ -230,7 +231,7 @@ func (Torrent *TorrentFile) SendUDPTrackerRequest(announceURL string) (*TrackerR
 			PORT,
 		)
 
-		fmt.Printf("Sending Announce to %s: info_hash = %x, peer_id = %s, left = %d\n", addr, infoHash, peerID, left)
+		log.Printf("[INFO]\tSending Announce to %s: info_hash = %x, peer_id = %s, left = %d\n", addr, infoHash, peerID, left)
 		conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 		_, err = conn.Write(announceReq)
@@ -249,7 +250,7 @@ func (Torrent *TorrentFile) SendUDPTrackerRequest(announceURL string) (*TrackerR
 			return nil, fmt.Errorf("Invalid announce response length: %d\n", n)
 		}
 
-		fmt.Printf("Raw announce response: %x\n", resp[:n])
+		log.Printf("[INFO]\tRaw announce response: %x\n", resp[:n])
 		action = binary.BigEndian.Uint32(resp[0:4])
 
 		if action == 3 {
@@ -270,13 +271,13 @@ func (Torrent *TorrentFile) SendUDPTrackerRequest(announceURL string) (*TrackerR
 		seeders := binary.BigEndian.Uint32(resp[16:20])
 
 		peers := resp[20:n]
-		fmt.Printf("Raw peers bytes: %x\n", peers)
+		log.Printf("[INFO]\tRaw peers bytes: %x\n", peers)
 
 		if len(peers)%6 != 0 {
 			return nil, fmt.Errorf("Invalid peers length: %d (must be multiple of 6)\n", len(peers))
 		}
 
-		fmt.Printf("Received %d peers, leechers: %d, seeders: %d\n", len(peers)/6, leechers, seeders)
+		log.Printf("[INFO]\tReceived %d peers, leechers: %d, seeders: %d\n", len(peers)/6, leechers, seeders)
 
 		trackerResp := &TrackerResponse{
 			Peers:    string(peers),
@@ -338,22 +339,22 @@ func (Torrent *TorrentFile) SendTrackerResponse() (*TrackerResponse, error) {
 		}
 	}
 
-	fmt.Printf("Found %d unique trackers: %v\n", len(trackers), trackers)
-	fmt.Printf("UDP trackers: %v\n", udpTrackers)
-	fmt.Printf("HTTP trackers: %v\n", httpTrackers)
+	log.Printf("[INFO]\tFound %d unique trackers: %v\n", len(trackers), trackers)
+	log.Printf("[INFO]\tUDP trackers: %v\n", udpTrackers)
+	log.Printf("[INFO]\tHTTP trackers: %v\n", httpTrackers)
 
 	allPeers := make(map[string]struct{})
 	var finalInterval int
 
 	for _, announce := range udpTrackers {
-		fmt.Printf("Trying tracker: %s\n", announce)
+		log.Printf("[INFO]\tTrying tracker: %s\n", announce)
 		resp, err := Torrent.SendUDPTrackerRequest(announce)
 		if err == nil {
-			fmt.Printf("Success from UDP tracker %s: %d peers, interval: %d\n", announce, len(resp.Peers)/6, resp.Interval)
+			log.Printf("[INFO]\tSuccess from UDP tracker %s: %d peers, interval: %d\n", announce, len(resp.Peers)/6, resp.Interval)
 			peers, err := Torrent.ParsePeers(resp.Peers)
 
 			if err != nil {
-				fmt.Printf("Failed to parse peers from %s: %v\n", announce, err)
+				log.Printf("[FAIL]\tFailed to parse peers from %s: %v\n", announce, err)
 				continue
 			}
 
@@ -367,20 +368,20 @@ func (Torrent *TorrentFile) SendTrackerResponse() (*TrackerResponse, error) {
 			}
 
 		} else {
-			fmt.Printf("UDP tracker %s failed: %v\n", announce, err)
+			log.Printf("[FAIL]\tUDP tracker %s failed: %v\n", announce, err)
 		}
 	}
 
 	for _, announce := range httpTrackers {
-		fmt.Printf("Trying tracker: %s\n", announce)
+		log.Printf("[INFO]\tTrying tracker: %s\n", announce)
 		resp, err := Torrent.SendHTTPTrackerRequest(announce)
 
 		if err == nil {
-			fmt.Printf("Success from HTTP tracker %s: %d peers, interval: %d\n", announce, len(resp.Peers)/6, resp.Interval)
+			log.Printf("[INFO]\tSuccess from HTTP tracker %s: %d peers, interval: %d\n", announce, len(resp.Peers)/6, resp.Interval)
 			peers, err := Torrent.ParsePeers(resp.Peers)
 
 			if err != nil {
-				fmt.Printf("Failed to parse peers from %s: %v\n", announce, err)
+				log.Printf("[FAIL]\tFailed to parse peers from %s: %v\n", announce, err)
 				continue
 			}
 
@@ -393,12 +394,12 @@ func (Torrent *TorrentFile) SendTrackerResponse() (*TrackerResponse, error) {
 				finalInterval = resp.Interval
 			}
 		} else {
-			fmt.Printf("HTTP tracker %s failed: %v\n", announce, err)
+			log.Printf("[FAIL]\tHTTP tracker %s failed: %v\n", announce, err)
 		}
 	}
 
 	if len(allPeers) == 0 {
-		return nil, fmt.Errorf("no peers received from any tracker")
+		return nil, fmt.Errorf("No peers received from any tracker")
 	}
 
 	peerBytes := make([]byte, 0, len(allPeers)*6)

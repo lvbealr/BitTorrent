@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+// --------------------------------------------------------------------------------------------- //
+
 type Handshake struct {
 	ProtocolNameLength byte
 	Protocol           [19]byte
@@ -24,7 +26,7 @@ type Handshake struct {
 
 func (Torrent *TorrentFile) PerformHandshake(peer Peer) (string, error) {
 	addr := fmt.Sprintf("%s:%d", peer.IP, peer.Port)
-	myIP := "195.133.75.235"
+	myIP := "195.133.75.235" // TODO: get own external IP address
 	if peer.IP == myIP {
 		return "", fmt.Errorf("Skip handshake with self: %s", addr)
 	}
@@ -176,19 +178,24 @@ func (Torrent *TorrentFile) SendMessage(peer *Peer, msg Message) error {
 	length := uint32(len(msg.Payload) + 1)
 	binary.Write(&buf, binary.BigEndian, length)
 	binary.Write(&buf, binary.BigEndian, msg.ID)
+
 	if len(msg.Payload) > 0 {
 		buf.Write(msg.Payload)
 	}
 
-	peer.Connection.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	_, err := peer.Connection.Write(buf.Bytes())
-	if err != nil {
-		return fmt.Errorf("Sending message to %s:%d: %v", peer.IP, peer.Port, err)
+	for attempt := 1; attempt <= 3; attempt++ {
+		peer.Connection.SetWriteDeadline(time.Now().Add(60 * time.Second))
+		_, err := peer.Connection.Write(buf.Bytes())
+		if err == nil {
+			fmt.Printf("Peer %s:%d: sent message ID=%d, payload length=%d\n", peer.IP, peer.Port, msg.ID, len(msg.Payload))
+			return nil
+		}
+
+		fmt.Printf("Peer %s:%d: attempt %d failed to send message ID = %d: %v\n", peer.IP, peer.Port, attempt, msg.ID, err)
+		time.Sleep(2 * time.Second)
 	}
 
-	fmt.Printf("Peer %s:%d: sent message ID=%d, payload length=%d\n", peer.IP, peer.Port, msg.ID, len(msg.Payload))
-
-	return nil
+	return fmt.Errorf("Failed to send message to %s:%d after 3 attempts", peer.IP, peer.Port)
 }
 
 func (Torrent *TorrentFile) ReceiveMessage(peer *Peer) (*Message, error) {
@@ -196,7 +203,7 @@ func (Torrent *TorrentFile) ReceiveMessage(peer *Peer) (*Message, error) {
 		return nil, fmt.Errorf("No connection to peer %s:%d", peer.IP, peer.Port)
 	}
 
-	peer.Connection.SetReadDeadline(time.Now().Add(30 * time.Second))
+	peer.Connection.SetReadDeadline(time.Now().Add(60 * time.Second))
 	var length uint32
 	err := binary.Read(peer.Connection, binary.BigEndian, &length)
 	if err != nil {
@@ -249,10 +256,19 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 
 	fmt.Printf("Peer %s:%d: Starting download\n", peer.IP, peer.Port)
 
-	err := Torrent.SendMessage(peer, Message{ID: Interested})
-	if err != nil {
-		fmt.Printf("Peer %s:%d: failed to send Interested: %v\n", peer.IP, peer.Port, err)
-		return
+	for attempt := 1; attempt <= 3; attempt++ {
+		err := Torrent.SendMessage(peer, Message{ID: Interested})
+		if err == nil {
+			break
+		}
+
+		fmt.Printf("Peer %s:%d: attempt %d failed to send Interested: %v\n", peer.IP, peer.Port, attempt, err)
+
+		if attempt == 3 {
+			return
+		}
+
+		time.Sleep(2 * time.Second)
 	}
 
 	for {
@@ -287,7 +303,8 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 		}
 	}
 
-	blockSize := 1 << 14 // 16 KB
+	blockSize := 1 << 14 // 16 KB // TODO: to constant
+
 	for {
 		if peer.Choked {
 			fmt.Printf("Peer %s:%d: choked, waiting for Unchoke\n", peer.IP, peer.Port)
@@ -473,15 +490,12 @@ func (Torrent *TorrentFile) StartDownload(outputPath string) error {
 	sem := make(chan struct{}, 10)
 
 	Torrent.PeersMutex.Lock()
-
 	peers := make([]Peer, len(Torrent.Peers))
 	copy(peers, Torrent.Peers)
-
 	Torrent.PeersMutex.Unlock()
 
 	for i := range peers {
 		peer := &peers[i]
-
 		if peer.Connection == nil {
 			fmt.Printf("Peer %s:%d: invalid connection, skipping\n", peer.IP, peer.Port)
 			continue
@@ -489,11 +503,9 @@ func (Torrent *TorrentFile) StartDownload(outputPath string) error {
 
 		wg.Add(1)
 		sem <- struct{}{}
-
 		go func(pp *Peer) {
 			defer func() {
 				<-sem
-				wg.Done()
 				fmt.Printf("Peer %s:%d: StartDownload goroutine completed\n", pp.IP, pp.Port)
 			}()
 
@@ -513,12 +525,18 @@ func (Torrent *TorrentFile) StartDownload(outputPath string) error {
 	}
 	defer file.Close()
 
-	completed := 0
+	completed := make(map[int]bool)
 
 	for piece := range pieceChan {
 		Torrent.DownloadMutex.Lock()
-		_, err := file.Seek(int64(piece.Index)*Torrent.PieceLength, 0)
+		if completed[piece.Index] {
+			fmt.Printf("Piece %d already written, skipping\n", piece.Index)
+			Torrent.DownloadMutex.Unlock()
 
+			continue
+		}
+
+		_, err := file.Seek(int64(piece.Index)*Torrent.PieceLength, 0)
 		if err != nil {
 			fmt.Printf("Failed to seek for piece %d: %v\n", piece.Index, err)
 			Torrent.Downloaded[piece.Index] = false
@@ -536,15 +554,43 @@ func (Torrent *TorrentFile) StartDownload(outputPath string) error {
 			continue
 		}
 
+		completed[piece.Index] = true
 		Torrent.DownloadMutex.Unlock()
 
-		completed++
-
 		fmt.Printf("Wrote piece %d to %s, Progress: %.2f%% (%d/%d pieces)\n",
-			piece.Index, outputPath, float64(completed)/float64(Torrent.NumPieces)*100, completed, Torrent.NumPieces)
+			piece.Index, outputPath, float64(len(completed))/float64(Torrent.NumPieces)*100, len(completed), Torrent.NumPieces)
+	}
+
+	if len(completed) != Torrent.NumPieces {
+		return fmt.Errorf("Download incomplete: %d/%d pieces written", len(completed), Torrent.NumPieces)
 	}
 
 	return nil
+}
+
+func (Torrent *TorrentFile) RefreshPeer() {
+	go func() {
+		for {
+			resp, err := Torrent.SendTrackerResponse()
+			if err != nil {
+				fmt.Printf("Failed to refresh peers: %v\n", err)
+				time.Sleep(60 * time.Second)
+
+				continue
+			}
+
+			newPeers, err := Torrent.ParsePeers(resp.Peers)
+			if err != nil {
+				fmt.Printf("Failed to parse new peers: %v\n", err)
+				time.Sleep(60 * time.Second)
+
+				continue
+			}
+
+			Torrent.ConnectToPeers(newPeers)
+			time.Sleep(time.Duration(resp.Interval) * time.Second)
+		}
+	}()
 }
 
 // --------------------------------------------------------------------------------------------- //

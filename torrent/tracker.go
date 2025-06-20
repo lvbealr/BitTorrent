@@ -85,6 +85,7 @@ func (Torrent *TorrentFile) SendHTTPTrackerRequest(announceURL string) (*Tracker
 	return &trackerResp, nil
 }
 
+// TODO: describe request structure
 func (Torrent *TorrentFile) CreateAnnounceRequest(
 	connectionID uint64,
 	action uint32,
@@ -143,9 +144,10 @@ func (Torrent *TorrentFile) SendUDPTrackerRequest(announceURL string) (*TrackerR
 		return nil, err
 	}
 
+	// TODO: describe request structure
 	connectReq := make([]byte, 16)
-	binary.BigEndian.PutUint64(connectReq[0:8], 0x41727101980)
-	binary.BigEndian.PutUint32(connectReq[8:12], 0)
+	binary.BigEndian.PutUint64(connectReq[0:8], 0x41727101980) // TODO: to constant
+	binary.BigEndian.PutUint32(connectReq[8:12], 0)            // TODO: to constant
 	binary.BigEndian.PutUint32(connectReq[12:16], transactionID)
 
 	fmt.Printf("Sending Connect to %s, transaction_id: %d\n", addr, transactionID)
@@ -201,6 +203,7 @@ func (Torrent *TorrentFile) SendUDPTrackerRequest(announceURL string) (*TrackerR
 			return nil, err
 		}
 
+		// TODO: to lower case
 		const (
 			ANNOUNCE   = 1
 			DOWNLOADED = 0
@@ -431,6 +434,8 @@ func (Torrent *TorrentFile) SendTrackerResponse() (*TrackerResponse, error) {
 		Interval: finalInterval,
 	}, nil
 }
+
+// --------------------------------------------------------------------------------------------- //
 
 func atoi(s string) int {
 	n, _ := strconv.Atoi(s)

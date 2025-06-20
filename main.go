@@ -25,6 +25,8 @@ func main() {
 
 	Torrent.ConnectToPeers(peers)
 
+	Torrent.RefreshPeer()
+
 	err = Torrent.StartDownload(os.Args[2])
 	if err != nil {
 		log.Fatalf("%v\n", err)

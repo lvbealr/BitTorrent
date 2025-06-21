@@ -3,6 +3,7 @@ package torrent
 import (
 	mrand "math/rand"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -32,6 +33,7 @@ type TorrentFile struct {
 	PieceHashes   [][20]byte             `bencode:"-"`
 	Downloaded    []bool                 `bencode:"-"`
 	DownloadMutex sync.Mutex             `bencode:"-"`
+	Files         []FileInfo             `bencode:"-"`
 }
 
 type TorrentInfo struct {
@@ -72,6 +74,13 @@ type Peer struct {
 	Connection net.Conn
 	Choked     bool
 	Bitfield   []byte
+}
+
+type FileInfo struct {
+	Path   string
+	Length int64
+	Offset int64
+	Handle *os.File `bencode:"-"`
 }
 
 // --------------------------------------------------------------------------------------------- //

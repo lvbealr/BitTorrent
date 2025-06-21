@@ -4,6 +4,7 @@ import (
 	crand "crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -84,6 +85,37 @@ func (Torrent *TorrentFile) GenerateTransactionID() (uint32, error) {
 	}
 
 	return binary.BigEndian.Uint32(buf[:]), nil
+}
+
+func (Torrent *TorrentFile) BuildFileInfo(outputDir string) error {
+	Torrent.Files = nil
+
+	if len(Torrent.Info.Files) == 0 {
+		Torrent.Files = append(Torrent.Files, FileInfo{
+			Path:   filepath.Join(outputDir, Torrent.Info.Name),
+			Length: Torrent.Info.Length,
+			Offset: 0,
+		})
+	} else {
+		baseDir := filepath.Join(outputDir, Torrent.Info.Name)
+		var offset int64 = 0
+
+		for _, fileEntry := range Torrent.Info.Files {
+			parts := []string{baseDir}
+			parts = append(parts, fileEntry.Path...)
+			fullPath := filepath.Join(parts...)
+
+			Torrent.Files = append(Torrent.Files, FileInfo{
+				Path:   fullPath,
+				Length: fileEntry.Length,
+				Offset: offset,
+			})
+
+			offset += fileEntry.Length
+		}
+	}
+
+	return nil
 }
 
 // --------------------------------------------------------------------------------------------- //

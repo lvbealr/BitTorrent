@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -481,11 +482,44 @@ func (Torrent *TorrentFile) HasPiece(bitfield []byte, index int) bool {
 	return (bitfield[byteIndex]>>(7-bitIndex))&1 == 1
 }
 
-func (Torrent *TorrentFile) StartDownload(outputPath string) error {
+func (Torrent *TorrentFile) StartDownload(outputDir string) error {
 	err := Torrent.InitializePieces()
 	if err != nil {
 		return fmt.Errorf("Failed to initialize pieces: %v", err)
 	}
+
+	err = Torrent.BuildFileInfo(outputDir)
+	if err != nil {
+		return err
+	}
+
+	for i := range Torrent.Files {
+		file := &Torrent.Files[i]
+		dir := filepath.Dir(file.Path)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("Failed to create directory %s: %v\n", dir, err)
+		}
+
+		f, err := os.OpenFile(file.Path, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			return fmt.Errorf("Failed to create file %s: %v\n", file.Path, err)
+		}
+
+		if err := f.Truncate(file.Length); err != nil {
+			f.Close()
+			return fmt.Errorf("Failed to truncate file %s: %v\n", file.Path, err)
+		}
+
+		file.Handle = f
+	}
+
+	defer func() {
+		for _, file := range Torrent.Files {
+			if file.Handle != nil {
+				file.Handle.Close()
+			}
+		}
+	}()
 
 	pieceChan := make(chan PieceResult, Torrent.NumPieces)
 	var wg sync.WaitGroup
@@ -522,12 +556,6 @@ func (Torrent *TorrentFile) StartDownload(outputPath string) error {
 		log.Printf("[INFO]\tAll download goroutines completed, pieceChan closed")
 	}()
 
-	file, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("Failed to create output file: %v", err)
-	}
-	defer file.Close()
-
 	completed := make(map[int]bool)
 	barWidth := 50
 	completedCount := 0
@@ -551,22 +579,30 @@ func (Torrent *TorrentFile) StartDownload(outputPath string) error {
 			continue
 		}
 
-		_, err := file.Seek(int64(piece.Index)*Torrent.PieceLength, 0)
-		if err != nil {
-			fmt.Printf("Failed to seek for piece %d: %v\n", piece.Index, err)
-			Torrent.Downloaded[piece.Index] = false
-			Torrent.DownloadMutex.Unlock()
+		pieceStart := int64(piece.Index) * Torrent.PieceLength
+		pieceEnd := pieceStart + int64(len(piece.Data))
 
-			continue
-		}
+		for _, file := range Torrent.Files {
+			fileStart := file.Offset
+			fileEnd := file.Offset + file.Length
 
-		_, err = file.Write(piece.Data)
-		if err != nil {
-			fmt.Printf("Failed to write piece %d: %v\n", piece.Index, err)
-			Torrent.Downloaded[piece.Index] = false
-			Torrent.DownloadMutex.Unlock()
+			start := max(pieceStart, fileStart)
+			end := min(pieceEnd, fileEnd)
 
-			continue
+			if start >= end {
+				continue
+			}
+
+			startInPiece := start - pieceStart
+			endInPiece := end - pieceStart
+
+			chunk := piece.Data[startInPiece:endInPiece]
+
+			_, err := file.Handle.WriteAt(chunk, start-file.Offset)
+			if err != nil {
+				log.Printf("[ERROR]\tFailed writing to %s: %v", file.Path, err)
+				Torrent.Downloaded[piece.Index] = false
+			}
 		}
 
 		completed[piece.Index] = true

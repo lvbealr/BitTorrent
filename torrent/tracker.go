@@ -17,6 +17,18 @@ import (
 
 // --------------------------------------------------------------------------------------------- //
 
+/*
+SendHTTPTrackerRequest sends an HTTP request to a tracker to retrieve peer information.
+It constructs a request with torrent metadata and parses the bencoded response.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile containing metadata such as InfoHash and total size.
+  - announceURL: URL of the HTTP tracker to contact.
+
+Returns:
+  - *TrackerResponse: Pointer to the TrackerResponse containing peers and interval.
+  - error: Non-nil if URL parsing, metadata retrieval, HTTP request, or response decoding fails.
+*/
 func (Torrent *TorrentFile) SendHTTPTrackerRequest(announceURL string) (*TrackerResponse, error) {
 	u, err := url.Parse(announceURL)
 	if err != nil {
@@ -86,7 +98,31 @@ func (Torrent *TorrentFile) SendHTTPTrackerRequest(announceURL string) (*Tracker
 	return &trackerResp, nil
 }
 
-// TODO: describe request structure
+// --------------------------------------------------------------------------------------------- //
+
+/*
+CreateAnnounceRequest constructs a binary announce request for a UDP tracker.
+It formats the request according to the BitTorrent UDP tracker protocol.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile (implicitly used for method context).
+  - connectionID: Unique identifier for the UDP connection.
+  - action: Action code (e.g., 1 for announce).
+  - transactionID: Unique identifier for the transaction.
+  - infoHash: 20-byte SHA-1 hash of the torrent's info dictionary.
+  - peerID: Unique identifier for the client.
+  - downloaded: Number of bytes downloaded.
+  - left: Number of bytes remaining to download.
+  - uploaded: Number of bytes uploaded.
+  - event: Event code (e.g., 2 for started).
+  - IP: IP address (0 for default).
+  - key: Random key for the request.
+  - num_want: Number of peers requested (-1 for default).
+  - port: Port number for the client.
+
+Returns:
+  - []byte: 98-byte binary announce request.
+*/
 func (Torrent *TorrentFile) CreateAnnounceRequest(
 	connectionID uint64,
 	action uint32,
@@ -123,6 +159,20 @@ func (Torrent *TorrentFile) CreateAnnounceRequest(
 	return announceReq
 }
 
+// --------------------------------------------------------------------------------------------- //
+
+/*
+SendUDPTrackerRequest sends a UDP request to a tracker to retrieve peer information.
+It performs a connect request followed by an announce request, handling retries and response validation.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile containing metadata such as InfoHash and total size.
+  - announceURL: URL of the UDP tracker to contact.
+
+Returns:
+  - *TrackerResponse: Pointer to the TrackerResponse containing peers, interval, leechers, and seeders.
+  - error: Non-nil if URL parsing, connection, request sending, or response validation fails.
+*/
 func (Torrent *TorrentFile) SendUDPTrackerRequest(announceURL string) (*TrackerResponse, error) {
 	u, err := url.Parse(announceURL)
 	if err != nil {
@@ -145,10 +195,14 @@ func (Torrent *TorrentFile) SendUDPTrackerRequest(announceURL string) (*TrackerR
 		return nil, err
 	}
 
-	// TODO: describe request structure
+	const (
+		protocolID  = 0x41727101980
+		connPackage = 0x00
+	)
+
 	connectReq := make([]byte, 16)
-	binary.BigEndian.PutUint64(connectReq[0:8], 0x41727101980) // TODO: to constant
-	binary.BigEndian.PutUint32(connectReq[8:12], 0)            // TODO: to constant
+	binary.BigEndian.PutUint64(connectReq[0:8], protocolID)
+	binary.BigEndian.PutUint32(connectReq[8:12], connPackage)
 	binary.BigEndian.PutUint32(connectReq[12:16], transactionID)
 
 	log.Printf("[INFO]\tSending Connect to %s, transaction_id: %d\n", addr, transactionID)
@@ -204,31 +258,30 @@ func (Torrent *TorrentFile) SendUDPTrackerRequest(announceURL string) (*TrackerR
 			return nil, err
 		}
 
-		// TODO: to lower case
 		const (
-			ANNOUNCE   = 1
-			DOWNLOADED = 0
-			UPLOADED   = 0
-			STARTED    = 2
-			IP         = 0
-			NUM_WANT   = -1
-			PORT       = 6881
+			announce   = 1
+			downloaded = 0
+			uploaded   = 0
+			started    = 2
+			ip         = 0
+			num_want   = -1
+			port       = 6881
 		)
 
 		announceReq := Torrent.CreateAnnounceRequest(
 			connectionID,
-			ANNOUNCE,
+			announce,
 			transactionID,
 			infoHash[:],
 			peerID,
-			DOWNLOADED,
+			downloaded,
 			left,
-			UPLOADED,
-			STARTED,
-			IP,
+			uploaded,
+			started,
+			ip,
 			mrand.Uint32(),
-			NUM_WANT,
-			PORT,
+			num_want,
+			port,
 		)
 
 		log.Printf("[INFO]\tSending Announce to %s: info_hash = %x, peer_id = %s, left = %d\n", addr, infoHash, peerID, left)
@@ -294,6 +347,19 @@ func (Torrent *TorrentFile) SendUDPTrackerRequest(announceURL string) (*TrackerR
 	return nil, fmt.Errorf("No connect response after 3 attempts\n")
 }
 
+// --------------------------------------------------------------------------------------------- //
+
+/*
+SendTrackerResponse aggregates peer information from multiple trackers.
+It contacts both HTTP and UDP trackers, combining their peer lists and selecting the shortest interval.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile containing tracker URLs and metadata.
+
+Returns:
+  - *TrackerResponse: Pointer to the TrackerResponse with a combined peer list and minimum interval.
+  - error: Non-nil if no trackers are found or no peers are received.
+*/
 func (Torrent *TorrentFile) SendTrackerResponse() (*TrackerResponse, error) {
 	publicTrackers := []string{
 		"udp://tracker.opentrackr.org:1337/announce",
@@ -438,6 +504,16 @@ func (Torrent *TorrentFile) SendTrackerResponse() (*TrackerResponse, error) {
 
 // --------------------------------------------------------------------------------------------- //
 
+/*
+atoi converts a string to an integer, ignoring errors.
+It is a helper function for parsing IP addresses.
+
+Parameters:
+  - s: String to convert to an integer.
+
+Returns:
+  - int: The parsed integer, or 0 if parsing fails.
+*/
 func atoi(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n

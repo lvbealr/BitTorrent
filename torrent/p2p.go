@@ -17,6 +17,17 @@ import (
 
 // --------------------------------------------------------------------------------------------- //
 
+/*
+Handshake represents the structure of a BitTorrent protocol handshake message.
+It is used to initiate a connection with a peer and verify compatibility.
+
+Fields:
+  - ProtocolNameLength: Length of the protocol name (typically 19 for "BitTorrent protocol").
+  - Protocol: Fixed-size array containing the protocol name.
+  - Reserved: Reserved bytes for protocol extensions.
+  - InfoHash: 20-byte SHA-1 hash of the torrent's info dictionary.
+  - PeerID: 20-byte unique identifier for the peer.
+*/
 type Handshake struct {
 	ProtocolNameLength byte
 	Protocol           [19]byte
@@ -27,9 +38,25 @@ type Handshake struct {
 
 // --------------------------------------------------------------------------------------------- //
 
+/*
+PerformHandshake executes the BitTorrent handshake with a specified peer.
+It establishes a TCP connection, sends a handshake message, and verifies the response.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile containing metadata like InfoHash.
+  - peer: Peer struct containing the IP and port of the peer to connect to.
+
+Returns:
+  - string: Remote peer's PeerID if the handshake is successful.
+  - error: Non-nil if connection, handshake sending, or response validation fails.
+*/
 func (Torrent *TorrentFile) PerformHandshake(peer Peer) (string, error) {
 	addr := fmt.Sprintf("%s:%d", peer.IP, peer.Port)
-	myIP := "195.133.75.235" // TODO: get own external IP address
+	myIP, err := GetExternalIP()
+	if err != nil {
+		return "", err
+	}
+
 	if peer.IP == myIP {
 		return "", fmt.Errorf("Skip handshake with self: %s", addr)
 	}
@@ -101,6 +128,19 @@ func (Torrent *TorrentFile) PerformHandshake(peer Peer) (string, error) {
 	return remotePeerID, nil
 }
 
+// --------------------------------------------------------------------------------------------- //
+
+/*
+ConnectToPeers establishes connections with a list of peers by performing handshakes.
+It uses goroutines to handle multiple peers concurrently, with a semaphore to limit connections.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile containing metadata.
+  - peers: Slice of Peer structs to connect to.
+
+Returns:
+  - None: The function updates Torrent.Peers and logs connection status.
+*/
 func (Torrent *TorrentFile) ConnectToPeers(peers []Peer) {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 10)
@@ -130,6 +170,18 @@ func (Torrent *TorrentFile) ConnectToPeers(peers []Peer) {
 	log.Printf("[INFO]\tConnected to %d peers\n", len(Torrent.Peers))
 }
 
+// --------------------------------------------------------------------------------------------- //
+
+/*
+InitializePieces sets up the piece-related metadata for the torrent.
+It extracts piece length, number of pieces, and piece hashes from the torrent's info.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile to initialize.
+
+Returns:
+  - error: Non-nil if the pieces data is invalid.
+*/
 func (Torrent *TorrentFile) InitializePieces() error {
 	Torrent.PieceLength = Torrent.Info.PieceLength
 	pieces := Torrent.Info.Pieces
@@ -151,6 +203,21 @@ func (Torrent *TorrentFile) InitializePieces() error {
 
 // --------------------------------------------------------------------------------------------- //
 
+/*
+MessageID is an enumeration of BitTorrent protocol message types.
+It defines the possible message IDs used in peer communication.
+
+Values:
+  - Choke: Indicates the peer is choked (not sending data).
+  - Unchoke: Indicates the peer is unchoked (can send data).
+  - Interested: Indicates interest in downloading from the peer.
+  - NotInterested: Indicates no interest in downloading from the peer.
+  - Have: Indicates the peer has a specific piece.
+  - Bitfield: Indicates which pieces the peer has.
+  - Request: Requests a block of a piece.
+  - Piece: Delivers a block of a piece.
+  - Cancel: Cancels a previous request.
+*/
 type MessageID uint8
 
 const (
@@ -165,6 +232,16 @@ const (
 	Cancel
 )
 
+// --------------------------------------------------------------------------------------------- //
+
+/*
+Message represents a BitTorrent protocol message.
+It contains the message type and its associated payload.
+
+Fields:
+  - ID: The type of message (e.g., Choke, Piece).
+  - Payload: The message's data, if any.
+*/
 type Message struct {
 	ID      MessageID
 	Payload []byte
@@ -172,6 +249,18 @@ type Message struct {
 
 // --------------------------------------------------------------------------------------------- //
 
+/*
+SendMessage sends a BitTorrent protocol message to a peer.
+It serializes the message with its length prefix and retries up to three times.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile.
+  - peer: Pointer to the Peer to send the message to.
+  - msg: The Message to send.
+
+Returns:
+  - error: Non-nil if the connection is invalid or all send attempts fail.
+*/
 func (Torrent *TorrentFile) SendMessage(peer *Peer, msg Message) error {
 	if peer.Connection == nil {
 		return fmt.Errorf("No connection to peer %s:%d", peer.IP, peer.Port)
@@ -201,6 +290,20 @@ func (Torrent *TorrentFile) SendMessage(peer *Peer, msg Message) error {
 	return fmt.Errorf("Failed to send message to %s:%d after 3 attempts", peer.IP, peer.Port)
 }
 
+// --------------------------------------------------------------------------------------------- //
+
+/*
+ReceiveMessage reads and parses a BitTorrent protocol message from a peer.
+It handles keep-alive messages (zero length) and validates message size.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile.
+  - peer: Pointer to the Peer to receive the message from.
+
+Returns:
+  - *Message: Pointer to the received message, or an empty message for keep-alive.
+  - error: Non-nil if the connection is invalid, message is too large, or read fails.
+*/
 func (Torrent *TorrentFile) ReceiveMessage(peer *Peer) (*Message, error) {
 	if peer.Connection == nil {
 		return nil, fmt.Errorf("No connection to peer %s:%d", peer.IP, peer.Port)
@@ -240,6 +343,14 @@ func (Torrent *TorrentFile) ReceiveMessage(peer *Peer) (*Message, error) {
 
 // --------------------------------------------------------------------------------------------- //
 
+/*
+PieceResult represents a downloaded piece of the torrent.
+It contains the piece index and its data.
+
+Fields:
+  - Index: The index of the downloaded piece.
+  - Data: The byte slice containing the piece's data.
+*/
 type PieceResult struct {
 	Index int
 	Data  []byte
@@ -247,6 +358,19 @@ type PieceResult struct {
 
 // --------------------------------------------------------------------------------------------- //
 
+/*
+DownloadFromPeer downloads pieces from a specific peer.
+It sends an Interested message, processes incoming messages, and requests pieces.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile containing piece metadata.
+  - peer: Pointer to the Peer to download from.
+  - pieceChan: Channel to send downloaded pieces to.
+  - wg: WaitGroup to signal completion.
+
+Returns:
+  - None: The function sends PieceResult to pieceChan and logs status.
+*/
 func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceResult, wg *sync.WaitGroup) {
 	defer func() {
 		if peer.Connection != nil {
@@ -306,7 +430,9 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 		}
 	}
 
-	blockSize := 1 << 14 // 16 KB // TODO: to constant
+	const (
+		blockSize = 1 << 14 // 16 kB
+	)
 
 	for {
 		if peer.Choked {
@@ -467,6 +593,20 @@ func (Torrent *TorrentFile) DownloadFromPeer(peer *Peer, pieceChan chan<- PieceR
 	}
 }
 
+// --------------------------------------------------------------------------------------------- //
+
+/*
+HasPiece checks if a peer has a specific piece based on its bitfield.
+The bitfield is a byte slice where each bit represents a piece's availability.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile.
+  - bitfield: Byte slice representing the peer's available pieces.
+  - index: Index of the piece to check.
+
+Returns:
+  - bool: True if the peer has the piece, false otherwise.
+*/
 func (Torrent *TorrentFile) HasPiece(bitfield []byte, index int) bool {
 	if bitfield == nil {
 		return false
@@ -482,6 +622,19 @@ func (Torrent *TorrentFile) HasPiece(bitfield []byte, index int) bool {
 	return (bitfield[byteIndex]>>(7-bitIndex))&1 == 1
 }
 
+// --------------------------------------------------------------------------------------------- //
+
+/*
+StartDownload initiates the download process for the torrent.
+It initializes pieces, creates output files, and spawns goroutines to download from peers.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile containing metadata and peer connections.
+  - outputDir: Directory where downloaded files will be saved.
+
+Returns:
+  - error: Non-nil if piece initialization, file creation, or download fails.
+*/
 func (Torrent *TorrentFile) StartDownload(outputDir string) error {
 	err := Torrent.InitializePieces()
 	if err != nil {
@@ -649,6 +802,18 @@ func (Torrent *TorrentFile) StartDownload(outputDir string) error {
 	return nil
 }
 
+// --------------------------------------------------------------------------------------------- //
+
+/*
+RefreshPeer periodically refreshes the peer list by contacting trackers.
+It runs in a goroutine, updating peers at intervals specified by the tracker.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile to refresh peers for.
+
+Returns:
+  - None: The function runs indefinitely, updating Torrent.Peers and logging status.
+*/
 func (Torrent *TorrentFile) RefreshPeer() {
 	go func() {
 		for {

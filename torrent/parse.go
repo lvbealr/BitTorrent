@@ -11,6 +11,19 @@ import (
 	"github.com/jackpal/bencode-go"
 )
 
+// --------------------------------------------------------------------------------------------- //
+
+/*
+extractInfoBytes extracts the info dictionary bytes from a bencoded torrent file.
+It locates the "4:info" prefix and parses the bencoded data to find the corresponding dictionary.
+
+Parameters:
+  - data: Byte slice containing the bencoded torrent file data.
+
+Returns:
+  - []byte: Byte slice of the info dictionary if found and valid.
+  - error: Non-nil if the info dictionary is not found, unterminated, or malformed.
+*/
 func extractInfoBytes(data []byte) ([]byte, error) {
 	idx := bytes.Index(data, []byte("4:info"))
 	if idx < 0 {
@@ -67,6 +80,19 @@ func extractInfoBytes(data []byte) ([]byte, error) {
 	return nil, fmt.Errorf("Torrent: unterminated info dict")
 }
 
+// --------------------------------------------------------------------------------------------- //
+
+/*
+computeInfoHash computes the SHA-1 hash of the info dictionary from a torrent file.
+It reads the file, extracts the info dictionary, and computes its hash.
+
+Parameters:
+  - path: Path to the .torrent file on disk.
+
+Returns:
+  - [20]byte: SHA-1 hash of the info dictionary.
+  - error: Non-nil if file reading or info dictionary extraction fails.
+*/
 func computeInfoHash(path string) ([20]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -83,6 +109,17 @@ func computeInfoHash(path string) ([20]byte, error) {
 
 // --------------------------------------------------------------------------------------------- //
 
+/*
+Parse loads and parses a .torrent file, populating a TorrentFile struct.
+It decodes the bencoded file and computes the info hash for the torrent.
+
+Parameters:
+  - Torrent: Pointer to the TorrentFile struct to populate with metadata.
+  - file: Path to the .torrent file on disk.
+
+Returns:
+  - error: Non-nil if file opening, bencode decoding, or info hash computation fails.
+*/
 func Parse(Torrent *TorrentFile, file string) error {
 	src, err := os.Open(file)
 	if err != nil {
